@@ -1,0 +1,129 @@
+{% extends 'base.html' %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-8">
+        <div class="card">
+            <div class="card-header">
+                <h4>{{ title }}</h4>
+            </div>
+            <div class="card-body">
+                <form method="post" id="transactionForm">
+                    {% csrf_token %}
+                    
+                    <!-- Тип операции (radio-кнопки) -->
+                    <div class="mb-4">
+                        <label class="form-label fw-bold">Тип операции</label>
+                        <div class="btn-group w-100" role="group">
+                            {% for radio in form.type %}
+                                <label class="btn btn-outline-primary {% if radio.data.value == 'expense' %}active{% endif %}">
+                                    {{ radio.tag }} {{ radio.choice_label }}
+                                </label>
+                            {% endfor %}
+                        </div>
+                    </div>
+                    
+                    <!-- Категории (кнопки-карточки) -->
+                    <div class="mb-4">
+                        <label class="form-label fw-bold">Категория</label>
+                        <div class="row g-2" id="categories-container">
+                            {% for category in form.fields.category.queryset %}
+                                <div class="col-md-4 col-sm-6">
+                                    <label class="category-card">
+                                        <input type="radio" name="category" value="{{ category.id }}" 
+                                               class="category-radio" {% if forloop.first %}checked{% endif %}>
+                                        <div class="card category-card-inner">
+                                            <div class="card-body text-center py-3">
+                                                <i class="fas {% if category.is_income %}fa-arrow-up{% else %}fa-arrow-down{% endif %} fa-2x mb-2"></i>
+                                                <h6 class="mb-0">{{ category.name }}</h6>
+                                                {% if category.budget_limit %}
+                                                    <small class="text-muted">Лимит: {{ category.budget_limit }} ₽</small>
+                                                {% endif %}
+                                            </div>
+                                        </div>
+                                    </label>
+                                </div>
+                            {% empty %}
+                                <div class="col-12">
+                                    <div class="alert alert-warning">
+                                        Нет категорий. Создайте их в админ-панели.
+                                    </div>
+                                </div>
+                            {% endfor %}
+                        </div>
+                    </div>
+                    
+                    <!-- Сумма -->
+                    <div class="mb-3">
+                        <label for="{{ form.amount.id_for_label }}" class="form-label fw-bold">Сумма</label>
+                        {{ form.amount }}
+                    </div>
+                    
+                    <!-- Дата -->
+                    <div class="mb-3">
+                        <label for="{{ form.date.id_for_label }}" class="form-label fw-bold">Дата</label>
+                        {{ form.date }}
+                    </div>
+                    
+                    <!-- Описание -->
+                    <div class="mb-3">
+                        <label for="{{ form.description.id_for_label }}" class="form-label fw-bold">Описание</label>
+                        {{ form.description }}
+                    </div>
+                    
+                    <button type="submit" class="btn btn-primary btn-lg w-100">Сохранить операцию</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+    /* Стили для карточек категорий */
+    .category-card {
+        cursor: pointer;
+        display: block;
+        margin: 0;
+    }
+    .category-radio {
+        display: none;
+    }
+    .category-card-inner {
+        border: 2px solid #dee2e6;
+        transition: all 0.2s;
+        cursor: pointer;
+    }
+    .category-radio:checked + .category-card-inner {
+        border-color: #0d6efd;
+        background-color: #f8f9fa;
+        box-shadow: 0 0 0 3px rgba(13, 110, 253, 0.25);
+    }
+    .category-card:hover .category-card-inner {
+        border-color: #86b7fe;
+        transform: translateY(-2px);
+    }
+    
+    /* Стили для radio-кнопок типа операции */
+    .btn-group input[type="radio"] {
+        display: none;
+    }
+    .btn-group .btn.active {
+        background-color: #0d6efd;
+        color: white;
+    }
+</style>
+
+<script>
+    // Обработка выбора типа операции (меняем цвет активной кнопки)
+    document.querySelectorAll('.btn-group input[type="radio"]').forEach(radio => {
+        radio.addEventListener('change', function() {
+            document.querySelectorAll('.btn-group .btn').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            this.parentElement.classList.add('active');
+        });
+    });
+</script>
+{% endblock %}

@@ -11,6 +11,34 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <!-- Font Awesome (иконки) -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+    /* Стили для формы */
+    select, input {
+        width: 100%;
+        padding: 8px 12px;
+        border: 1px solid #ced4da;
+        border-radius: 4px;
+    }
+    
+    /* Кнопка выхода (чтобы была на одной линии) */
+    .logout-form {
+        display: inline;
+        margin: 0;
+        padding: 0;
+    }
+    .logout-btn {
+        background: none;
+        border: none;
+        color: rgba(255, 255, 255, 0.55);
+        padding: 8px 0;
+        margin: 0;
+        cursor: pointer;
+        font-size: 1rem;
+    }
+    .logout-btn:hover {
+        color: rgba(255, 255, 255, 0.75);
+    }
+</style>
 </head>
 <body>
     <!-- Навигационная панель -->
@@ -26,10 +54,22 @@
                 <ul class="navbar-nav ms-auto">
                     {% if user.is_authenticated %}
                         <li class="nav-item">
-                            <span class="nav-link">Привет, {{ user.username }}!</span>
+                            <a class="nav-link" href="{% url 'dashboard' %}">Дашборд</a>
                         </li>
                         <li class="nav-item">
-                            <a class="nav-link" href="{% url 'logout' %}">Выйти</a>
+                            <a class="nav-link" href="{% url 'transaction_list' %}">Операции</a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="{% url 'add_transaction' %}">+ Добавить</a>
+                        </li>
+                        <li class="nav-item">
+                            <span class="nav-link text-light">| {{ user.username }} |</span>
+                        </li>
+                        <li class="nav-item">
+                            <form action="{% url 'logout' %}" method="post" class="logout-form">
+                                {% csrf_token %}
+                                <button type="submit" class="logout-btn">Выйти</button>
+                            </form>
                         </li>
                     {% else %}
                         <li class="nav-item">
