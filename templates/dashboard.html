@@ -1,0 +1,100 @@
+{% extends 'base.html' %}
+
+{% block title %}Дашборд{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <h1 class="mb-4">Мои финансы</h1>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-md-4 mb-3">
+        <div class="card bg-success text-white">
+            <div class="card-body">
+                <h5 class="card-title">Доходы</h5>
+                <h2>{{ total_income|default:"0" }} ₽</h2>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4 mb-3">
+        <div class="card bg-danger text-white">
+            <div class="card-body">
+                <h5 class="card-title">Расходы</h5>
+                <h2>{{ total_expense|default:"0" }} ₽</h2>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4 mb-3">
+        <div class="card bg-primary text-white">
+            <div class="card-body">
+                <h5 class="card-title">Баланс</h5>
+                <h2>{{ balance|default:"0" }} ₽</h2>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row mt-4">
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                <h5>Расходы по категориям</h5>
+            </div>
+            <div class="card-body">
+                <canvas id="expenseChart" width="400" height="300"></canvas>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                <h5>Последние операции</h5>
+            </div>
+            <div class="card-body">
+                <table class="table table-sm">
+                    <thead>
+                        <tr>
+                            <th>Дата</th>
+                            <th>Категория</th>
+                            <th>Сумма</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for transaction in recent_transactions %}
+                        <tr>
+                            <td>{{ transaction.date }}</td>
+                            <td>{{ transaction.category.name }}</td>
+                            <td class="{% if transaction.type == 'expense' %}text-danger{% else %}text-success{% endif %}">
+                                {{ transaction.amount }} ₽
+                            </td>
+                        </tr>
+                        {% empty %}
+                        <tr>
+                            <td colspan="3">Нет операций. Добавьте первую!</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+                <a href="#" class="btn btn-sm btn-primary">Все операции</a>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+// График расходов по категориям
+const ctx = document.getElementById('expenseChart').getContext('2d');
+const expenseChart = new Chart(ctx, {
+    type: 'pie',
+    data: {
+        labels: {{ category_labels|safe }},
+        datasets: [{
+            data: {{ category_data|safe }},
+            backgroundColor: ['#FF6384', '#36A2EB', '#FFCE56', '#4BC0C0', '#9966FF', '#FF9F40']
+        }]
+    }
+});
+</script>
+{% endblock %}
