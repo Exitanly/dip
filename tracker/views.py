@@ -1,5 +1,5 @@
 from django.shortcuts import render, redirect, get_object_or_404
-from django.db.models import Sum, Avg, Count
+from django.db.models import Sum, Avg, Count, Q
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.forms import UserCreationForm
 from django.contrib.auth import login
@@ -20,28 +20,137 @@ from openpyxl.styles import Font, Alignment, PatternFill
 def dashboard(request):
     user = request.user
     today = timezone.now().date()
-    first_day_of_month = today.replace(day=1)
     
-    # Все транзакции пользователя
-    transactions = Transaction.objects.filter(user=user)
+       # ========== ОБРАБОТКА ФИЛЬТРА ==========
+    # Получаем параметры из GET-запроса или из сессии
+    period_type = request.GET.get('period_type')
     
-    # Доходы и расходы за всё время
+    # Сбрасываем session принудительно для теста (временно)
+    # request.session.flush()
+    
+    if period_type:
+        request.session['period_type'] = period_type
+        request.session['period_value'] = None
+        request.session['start_date'] = None
+        request.session['end_date'] = None
+        
+        if period_type == 'specific_month':
+            month_val = request.GET.get('month_value')  
+            if month_val:
+                request.session['period_value'] = month_val
+                print(f"[DEBUG] Сохранён месяц: {month_val}")
+                
+        elif period_type == 'year':
+            year_val = request.GET.get('year_value')  
+            if year_val:
+                request.session['period_value'] = year_val
+                print(f"[DEBUG] Сохранён год: {year_val}")
+                
+        elif period_type == 'custom':
+            start_val = request.GET.get('start_date')
+            end_val = request.GET.get('end_date')
+            if start_val:
+                request.session['start_date'] = start_val
+            if end_val:
+                request.session['end_date'] = end_val
+            print(f"[DEBUG] Сохранён период: {start_val} - {end_val}")
+    
+    # Восстанавливаем из сессии
+    period_type = request.session.get('period_type', 'current_month')
+    
+    start_date = None
+    end_date = None
+    period_display = ""
+    
+    # Определяем даты начала и конца периода
+    if period_type == 'current_month':
+        start_date = today.replace(day=1)
+        end_date = today
+        period_display = f"за {today.strftime('%B %Y')}"
+        
+    elif period_type == 'specific_month':
+        month_str = request.session.get('period_value')
+        print(f"[DEBUG] Загружен месяц из сессии: {month_str}")  # Отладка
+        
+        if month_str and '-' in month_str:
+            try:
+                year, month = map(int, month_str.split('-'))
+                start_date = datetime(year, month, 1).date()
+                if month == 12:
+                    end_date = datetime(year + 1, 1, 1).date() - timedelta(days=1)
+                else:
+                    end_date = datetime(year, month + 1, 1).date() - timedelta(days=1)
+                period_display = f"за {month_name[month]} {year}"
+                print(f"[DEBUG] Дата начала: {start_date}, конец: {end_date}")  # Отладка
+            except (ValueError, TypeError) as e:
+                print(f"[DEBUG] Ошибка парсинга: {e}")
+                start_date = today.replace(day=1)
+                end_date = today
+                period_display = f"за {today.strftime('%B %Y')}"
+        else:
+            start_date = today.replace(day=1)
+            end_date = today
+            period_display = f"за {today.strftime('%B %Y')}"
+            
+    elif period_type == 'year':
+        year_str = request.session.get('period_value')
+        if year_str and year_str.isdigit():
+            year = int(year_str)
+            start_date = datetime(year, 1, 1).date()
+            end_date = datetime(year, 12, 31).date()
+            period_display = f"за {year} год"
+        else:
+            start_date = today.replace(day=1)
+            end_date = today
+            period_display = f"за {today.strftime('%B %Y')}"
+            
+    elif period_type == 'custom':
+        start_date_str = request.session.get('start_date')
+        end_date_str = request.session.get('end_date')
+        if start_date_str and end_date_str:
+            try:
+                start_date = datetime.strptime(start_date_str, '%Y-%m-%d').date()
+                end_date = datetime.strptime(end_date_str, '%Y-%m-%d').date()
+                period_display = f"с {start_date.strftime('%d.%m.%Y')} по {end_date.strftime('%d.%m.%Y')}"
+            except (ValueError, TypeError):
+                start_date = today.replace(day=1)
+                end_date = today
+                period_display = f"за {today.strftime('%B %Y')}"
+        else:
+            start_date = today.replace(day=1)
+            end_date = today
+            period_display = f"за {today.strftime('%B %Y')}"
+    
+    else:
+        start_date = today.replace(day=1)
+        end_date = today
+        period_display = f"за {today.strftime('%B %Y')}"
+    
+    # Если по какой-то причине даты не установлены
+    if not start_date or not end_date:
+        start_date = today.replace(day=1)
+        end_date = today
+        period_display = f"за {today.strftime('%B %Y')}"
+    
+    # Все транзакции пользователя (без фильтра по дате для прогноза)
+    all_transactions = Transaction.objects.filter(user=user)
+    
+    # Транзакции за выбранный период
+    transactions = all_transactions.filter(date__gte=start_date, date__lte=end_date)
+    
+    # Доходы и расходы за период
     total_income = float(transactions.filter(type='income').aggregate(Sum('amount'))['amount__sum'] or 0)
     total_expense = float(transactions.filter(type='expense').aggregate(Sum('amount'))['amount__sum'] or 0)
     balance = total_income - total_expense
     
-    # Расходы по категориям для графика
+    # Расходы по категориям за период (для графика)
     expense_by_category = transactions.filter(type='expense').values('category__name').annotate(total=Sum('amount'))
     category_labels = [item['category__name'] for item in expense_by_category]
     category_data = [float(item['total']) for item in expense_by_category]
     
-    # Расходы за текущий месяц по категориям (для прогресс-баров)
-    monthly_expenses = transactions.filter(
-        type='expense',
-        date__gte=first_day_of_month,
-        date__lte=today
-    ).values('category_id').annotate(spent=Sum('amount'))
-    
+    # Расходы по категориям за период (для прогресс-баров)
+    # Для прогресс-баров используем лимиты из категорий, но сравниваем с тратами за период
+    monthly_expenses = transactions.filter(type='expense').values('category_id').annotate(spent=Sum('amount'))
     spent_dict = {item['category_id']: float(item['spent']) for item in monthly_expenses}
     
     # Категории с лимитами
@@ -80,22 +189,22 @@ def dashboard(request):
             'alert': alert,
         })
     
-    # ========== НОВАЯ АНАЛИТИКА ==========
+    # ========== АНАЛИТИКА (на основе всех данных) ==========
     
-    # 1. Прогноз расходов на следующий месяц
-    # Берём средние расходы за последние 3 месяца
+    # Прогноз на следующий месяц (на основе последних 3 месяцев)
     three_months_ago = today - timedelta(days=90)
-    last_3_months_expenses = transactions.filter(
+    last_3_months_avg = all_transactions.filter(
         type='expense',
         date__gte=three_months_ago,
         date__lte=today
-    ).aggregate(avg_monthly=Avg('amount'))['avg_monthly'] or 0
+    ).aggregate(avg_monthly=Avg('amount'))['avg_monthly']
     
-    # Умножаем на 1.05 (инфляция +5%) — выглядит умно
-    predicted_expenses = float(last_3_months_expenses) * 1.05
+    if last_3_months_avg:
+        predicted_expenses = float(last_3_months_avg) * 1.05
+    else:
+        predicted_expenses = 0
     
-    # 2. Топ-3 категории для сокращения расходов
-    # Находим категории с наибольшими тратами за текущий месяц
+    # Топ-3 категории для сокращения (на основе текущего периода)
     top_categories_to_reduce = []
     for budget in budget_data:
         if budget['limit'] and budget['percent'] and budget['percent'] > 70:
@@ -105,82 +214,45 @@ def dashboard(request):
             if potential_saving > 0:
                 top_categories_to_reduce.append({
                     'name': budget['name'],
-                    'spent': budget['spent'],
-                    'limit': budget['limit'],
+                    'spent': spent,
+                    'limit': limit,
                     'percent': round(budget['percent'], 1),
                     'potential_saving': round(potential_saving, 2),
                 })
-    # Сортируем по потенциальной экономии и берём топ-3
     top_categories_to_reduce = sorted(top_categories_to_reduce, key=lambda x: x['potential_saving'], reverse=True)[:3]
     
-    # 3. Умные советы на основе данных
+    # Умные советы
     tips = []
     
-    # Совет 1: Если расходы превышают доходы
     if total_expense > total_income:
         tips.append({
             'icon': '⚠️',
             'title': 'Расходы превышают доходы',
-            'message': f'Ваши расходы ({total_expense:.0f} ₽) превышают доходы ({total_income:.0f} ₽) на {total_expense - total_income:.0f} ₽. Рекомендуем пересмотреть бюджет.',
+            'message': f'Ваши расходы ({total_expense:.0f} ₽) превышают доходы ({total_income:.0f} ₽) на {total_expense - total_income:.0f} ₽.',
             'type': 'danger'
         })
     
-    # Совет 2: Если нет сбережений (баланс меньше 5% от доходов)
     if total_income > 0 and balance < (total_income * 0.05):
         tips.append({
             'icon': '🏦',
             'title': 'Низкая финансовая подушка',
-            'message': 'Старайтесь откладывать минимум 5-10% от доходов. Начните с малого — 500 ₽ в месяц.',
+            'message': 'Старайтесь откладывать минимум 5-10% от доходов.',
             'type': 'warning'
         })
     
-    # Совет 3: Если есть категории с перерасходом
     over_budget_categories = [b for b in budget_data if b.get('status') == 'danger']
     if over_budget_categories:
         names = ', '.join([b['name'] for b in over_budget_categories[:2]])
         tips.append({
             'icon': '📈',
             'title': 'Перерасход по бюджету',
-            'message': f'Вы превысили лимит в категориях: {names}. Попробуйте отслеживать траты в этих категориях внимательнее.',
+            'message': f'Вы превысили лимит в категориях: {names}.',
             'type': 'warning'
         })
     
-    # Совет 4: Если пользователь активен (есть много транзакций)
-    transaction_count = transactions.count()
-    if transaction_count > 20:
-        last_week = today - timedelta(days=7)
-        weekly_avg = transactions.filter(date__gte=last_week).count()
-        if weekly_avg > 10:
-            tips.append({
-                'icon': '📊',
-                'title': 'Вы активно пользуетесь трекером',
-                'message': f'За последнюю неделю вы добавили {weekly_avg} операций. Так держать! Анализ данных становится точнее.',
-                'type': 'success'
-            })
-    
-    # Совет 5: Если пользователь не ставил лимиты
-    categories_without_limits = [b for b in budget_data if b['limit'] is None]
-    if len(categories_without_limits) > 2:
-        tips.append({
-            'icon': '🎯',
-            'title': 'Установите лимиты бюджета',
-            'message': 'У вас нет лимитов в категориях. Зайдите в "Категории" и установите лимиты — это поможет контролировать расходы.',
-            'type': 'info'
-        })
-    
-    # Совет 6: Поздравление с экономией (если есть категории с тратами менее 50% лимита)
-    good_categories = [b for b in budget_data if b.get('status') == 'good' and b['percent'] and b['percent'] < 50]
-    if good_categories:
-        tips.append({
-            'icon': '🎉',
-            'title': 'Отличная экономия!',
-            'message': f'В категории "{good_categories[0]["name"]}" вы потратили всего {good_categories[0]["percent"]:.0f}% от лимита. Так держать!',
-            'type': 'success'
-        })
-    
-        # 4. Динамика расходов по дням за последние 30 дней
+    # Динамика расходов по дням за последние 30 дней (всегда за последние 30 дней)
     thirty_days_ago = today - timedelta(days=30)
-    daily_expenses = transactions.filter(
+    daily_expenses = all_transactions.filter(
         type='expense',
         date__gte=thirty_days_ago,
         date__lte=today
@@ -188,17 +260,21 @@ def dashboard(request):
     
     daily_labels = []
     daily_data = []
-    
     for item in daily_expenses:
         date_obj = item['date']
-        # Если это строка, преобразуем в объект date
         if isinstance(date_obj, str):
             date_obj = datetime.strptime(date_obj, '%Y-%m-%d').date()
         daily_labels.append(date_obj.strftime('%d.%m'))
         daily_data.append(float(item['total']))
     
-    # Последние 5 транзакций
+    # Последние 5 транзакций за период
     recent_transactions = transactions[:5]
+    
+    # Список доступных месяцев для выпадающего списка
+    available_months = []
+    dates = all_transactions.dates('date', 'month', order='DESC')
+    for dt in dates:
+        available_months.append(dt.strftime('%Y-%m'))
     
     context = {
         'total_income': total_income,
@@ -208,8 +284,14 @@ def dashboard(request):
         'category_data': category_data,
         'budget_data': budget_data,
         'recent_transactions': recent_transactions,
-        'current_month': today.strftime('%B %Y'),
-        # Новые данные для аналитики
+        'period_display': period_display,
+        'period_type': period_type,
+        'available_months': available_months,
+        'selected_month': request.session.get('period_value', today.strftime('%Y-%m')),
+        'selected_year': request.session.get('period_value', str(today.year)),
+        'start_date_val': request.session.get('start_date', today.replace(day=1).strftime('%Y-%m-%d')),
+        'end_date_val': request.session.get('end_date', today.strftime('%Y-%m-%d')),
+        # Аналитика
         'predicted_expenses': round(predicted_expenses, 2),
         'top_categories_to_reduce': top_categories_to_reduce,
         'tips': tips,
