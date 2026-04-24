@@ -3,6 +3,7 @@ from django.db.models import Sum
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.forms import UserCreationForm
 from django.contrib.auth import login
+from django.contrib import messages
 from .models import Transaction, Category
 from .forms import TransactionForm
 
@@ -41,16 +42,40 @@ def dashboard(request):
 @login_required
 def add_transaction(request):
     if request.method == 'POST':
-        form = TransactionForm(request.POST, user=request.user)
-        if form.is_valid():
-            transaction = form.save(commit=False)
-            transaction.user = request.user
-            transaction.save()
-            return redirect('dashboard')
+        # Получаем данные из POST-запроса
+        transaction_type = request.POST.get('type')
+        category_id = request.POST.get('category')
+        amount = request.POST.get('amount')
+        date = request.POST.get('date')
+        description = request.POST.get('description')
+        
+        # Создаём транзакцию
+        transaction = Transaction(
+            user=request.user,
+            type=transaction_type,
+            category_id=category_id,
+            amount=amount,
+            date=date,
+            description=description
+        )
+        transaction.save()
+        return redirect('dashboard')
     else:
-        form = TransactionForm(user=request.user)
-    
-    return render(request, 'transaction_form.html', {'form': form, 'title': 'Добавить операцию'})
+        # Разделяем категории на расходные и доходные
+        expense_categories = Category.objects.filter(user=request.user, is_income=False)
+        income_categories = Category.objects.filter(user=request.user, is_income=True)
+        
+        context = {
+            'title': 'Добавить операцию',
+            'expense_categories': expense_categories,
+            'income_categories': income_categories,
+        }
+        
+        # Если есть параметр type в GET (например, при редактировании), передаём его
+        if 'type' in request.GET:
+            context['selected_type'] = request.GET.get('type')
+        
+        return render(request, 'transaction_form.html', context)
 
 @login_required
 def transaction_list(request):
@@ -79,14 +104,27 @@ def edit_transaction(request, pk):
     transaction = get_object_or_404(Transaction, pk=pk, user=request.user)
     
     if request.method == 'POST':
-        form = TransactionForm(request.POST, instance=transaction, user=request.user)
-        if form.is_valid():
-            form.save()
-            return redirect('transaction_list')
+        # Обновляем транзакцию
+        transaction.type = request.POST.get('type')
+        transaction.category_id = request.POST.get('category')
+        transaction.amount = request.POST.get('amount')
+        transaction.date = request.POST.get('date')
+        transaction.description = request.POST.get('description')
+        transaction.save()
+        return redirect('transaction_list')
     else:
-        form = TransactionForm(instance=transaction, user=request.user)
-    
-    return render(request, 'transaction_form.html', {'form': form, 'title': 'Редактировать операцию'})
+        # Разделяем категории
+        expense_categories = Category.objects.filter(user=request.user, is_income=False)
+        income_categories = Category.objects.filter(user=request.user, is_income=True)
+        
+        context = {
+            'title': 'Редактировать операцию',
+            'expense_categories': expense_categories,
+            'income_categories': income_categories,
+            'form': transaction,  # передаём транзакцию для отображения текущих значений
+        }
+        
+        return render(request, 'transaction_form.html', context)
 
 @login_required
 def delete_transaction(request, pk):
@@ -102,9 +140,77 @@ def register(request):
         form = UserCreationForm(request.POST)
         if form.is_valid():
             user = form.save()
+            
+            # Создаём стандартные категории для нового пользователя
+            default_categories = [
+                {'name': 'Еда', 'is_income': False},
+                {'name': 'Транспорт', 'is_income': False},
+                {'name': 'Кафе и рестораны', 'is_income': False},
+                {'name': 'Супермаркеты', 'is_income': False},
+                {'name': 'Связь и интернет', 'is_income': False},
+                {'name': 'Зарплата', 'is_income': True},
+                {'name': 'Подработка', 'is_income': True},
+            ]
+            
+            for cat_data in default_categories:
+                Category.objects.create(
+                    user=user,
+                    name=cat_data['name'],
+                    is_income=cat_data['is_income'],
+                    budget_limit=None  # можно потом установить
+                )
+            
             login(request, user)
             return redirect('dashboard')
     else:
         form = UserCreationForm()
     
     return render(request, 'registration/register.html', {'form': form})
+
+@login_required
+def category_list(request):
+    categories = Category.objects.filter(user=request.user)
+    return render(request, 'category_list.html', {'categories': categories})
+
+@login_required
+def category_add(request):
+    if request.method == 'POST':
+        name = request.POST.get('name')
+        is_income = request.POST.get('is_income') == 'on'
+        budget_limit = request.POST.get('budget_limit') or None
+        
+        Category.objects.create(
+            user=request.user,
+            name=name,
+            is_income=is_income,
+            budget_limit=budget_limit
+        )
+        messages.success(request, f'Категория "{name}" создана!')
+        return redirect('category_list')
+    
+    return render(request, 'category_form.html', {'title': 'Создать категорию'})
+
+@login_required
+def category_edit(request, pk):
+    category = get_object_or_404(Category, pk=pk, user=request.user)
+    
+    if request.method == 'POST':
+        category.name = request.POST.get('name')
+        category.is_income = request.POST.get('is_income') == 'on'
+        category.budget_limit = request.POST.get('budget_limit') or None
+        category.save()
+        messages.success(request, f'Категория "{category.name}" обновлена!')
+        return redirect('category_list')
+    
+    return render(request, 'category_form.html', {'category': category, 'title': 'Редактировать категорию'})
+
+@login_required
+def category_delete(request, pk):
+    category = get_object_or_404(Category, pk=pk, user=request.user)
+    if request.method == 'POST':
+        category_name = category.name
+        category.delete()
+        messages.success(request, f'Категория "{category_name}" удалена!')
+        return redirect('category_list')
+    
+    return render(request, 'category_confirm_delete.html', {'category': category})

@@ -1,0 +1,74 @@
+{% extends 'base.html' %}
+
+{% block title %}Управление категориями{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h1>Мои категории</h1>
+    <a href="{% url 'category_add' %}" class="btn btn-success">+ Новая категория</a>
+</div>
+
+{% if messages %}
+    {% for message in messages %}
+        <div class="alert alert-success alert-dismissible fade show" role="alert">
+            {{ message }}
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        </div>
+    {% endfor %}
+{% endif %}
+
+<div class="row">
+    <div class="col-md-6">
+        <div class="card mb-4">
+            <div class="card-header bg-danger text-white">
+                <h5 class="mb-0">Расходы</h5>
+            </div>
+            <div class="card-body">
+                {% for cat in categories %}
+                    {% if not cat.is_income %}
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <span>{{ cat.name }}</span>
+                            <div>
+                                <a href="{% url 'category_edit' cat.pk %}" class="btn btn-sm btn-warning">✏️</a>
+                                <a href="{% url 'category_delete' cat.pk %}" class="btn btn-sm btn-danger">🗑️</a>
+                            </div>
+                        </div>
+                        {% if cat.budget_limit %}
+                            <small class="text-muted">Лимит: {{ cat.budget_limit }} ₽</small>
+                        {% endif %}
+                        <hr class="my-2">
+                    {% endif %}
+                {% empty %}
+                    <p>Нет категорий расходов</p>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header bg-success text-white">
+                <h5 class="mb-0">Доходы</h5>
+            </div>
+            <div class="card-body">
+                {% for cat in categories %}
+                    {% if cat.is_income %}
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <span>{{ cat.name }}</span>
+                            <div>
+                                <a href="{% url 'category_edit' cat.pk %}" class="btn btn-sm btn-warning">✏️</a>
+                                <a href="{% url 'category_delete' cat.pk %}" class="btn btn-sm btn-danger">🗑️</a>
+                            </div>
+                        </div>
+                        <hr class="my-2">
+                    {% endif %}
+                {% empty %}
+                    <p>Нет категорий доходов</p>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<a href="{% url 'dashboard' %}" class="btn btn-secondary mt-3">← Назад</a>
+{% endblock %}

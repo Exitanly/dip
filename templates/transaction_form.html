@@ -17,60 +17,46 @@
                     <div class="mb-4">
                         <label class="form-label fw-bold">Тип операции</label>
                         <div class="btn-group w-100" role="group">
-                            {% for radio in form.type %}
-                                <label class="btn btn-outline-primary {% if radio.data.value == 'expense' %}active{% endif %}">
-                                    {{ radio.tag }} {{ radio.choice_label }}
-                                </label>
-                            {% endfor %}
+                            <input type="radio" name="type" value="expense" id="type_expense" class="btn-check" {% if form.type.value == 'expense' or not form.type.value %}checked{% endif %}>
+                            <label class="btn btn-outline-danger" for="type_expense">💰 Расход</label>
+                            
+                            <input type="radio" name="type" value="income" id="type_income" class="btn-check" {% if form.type.value == 'income' %}checked{% endif %}>
+                            <label class="btn btn-outline-success" for="type_income">💵 Доход</label>
                         </div>
                     </div>
                     
-                    <!-- Категории (кнопки-карточки) -->
+                    <!-- Категории (динамические карточки) -->
                     <div class="mb-4">
                         <label class="form-label fw-bold">Категория</label>
                         <div class="row g-2" id="categories-container">
-                            {% for category in form.fields.category.queryset %}
-                                <div class="col-md-4 col-sm-6">
-                                    <label class="category-card">
-                                        <input type="radio" name="category" value="{{ category.id }}" 
-                                               class="category-radio" {% if forloop.first %}checked{% endif %}>
-                                        <div class="card category-card-inner">
-                                            <div class="card-body text-center py-3">
-                                                <i class="fas {% if category.is_income %}fa-arrow-up{% else %}fa-arrow-down{% endif %} fa-2x mb-2"></i>
-                                                <h6 class="mb-0">{{ category.name }}</h6>
-                                                {% if category.budget_limit %}
-                                                    <small class="text-muted">Лимит: {{ category.budget_limit }} ₽</small>
-                                                {% endif %}
-                                            </div>
-                                        </div>
-                                    </label>
-                                </div>
-                            {% empty %}
-                                <div class="col-12">
-                                    <div class="alert alert-warning">
-                                        Нет категорий. Создайте их в админ-панели.
-                                    </div>
-                                </div>
-                            {% endfor %}
+                            <!-- Сюда будут динамически подгружаться категории -->
+                            <div class="col-12 text-center text-muted py-3">
+                                Выберите тип операции
+                            </div>
                         </div>
                     </div>
                     
                     <!-- Сумма -->
                     <div class="mb-3">
-                        <label for="{{ form.amount.id_for_label }}" class="form-label fw-bold">Сумма</label>
-                        {{ form.amount }}
+                        <label for="{{ form.amount.id_for_label }}" class="form-label fw-bold">Сумма (₽)</label>
+                        <input type="number" name="amount" id="{{ form.amount.id_for_label }}" 
+                               class="form-control form-control-lg" step="0.01" 
+                               placeholder="0.00" value="{{ form.amount.value|default:'' }}" required>
                     </div>
                     
                     <!-- Дата -->
                     <div class="mb-3">
                         <label for="{{ form.date.id_for_label }}" class="form-label fw-bold">Дата</label>
-                        {{ form.date }}
+                        <input type="date" name="date" id="{{ form.date.id_for_label }}" 
+                               class="form-control" value="{{ form.date.value|default:'' }}" required>
                     </div>
                     
                     <!-- Описание -->
                     <div class="mb-3">
-                        <label for="{{ form.description.id_for_label }}" class="form-label fw-bold">Описание</label>
-                        {{ form.description }}
+                        <label for="{{ form.description.id_for_label }}" class="form-label fw-bold">Описание (необязательно)</label>
+                        <input type="text" name="description" id="{{ form.description.id_for_label }}" 
+                               class="form-control" placeholder="Например: Обед в кафе" 
+                               value="{{ form.description.value|default:'' }}">
                     </div>
                     
                     <button type="submit" class="btn btn-primary btn-lg w-100">Сохранить операцию</button>
@@ -81,7 +67,6 @@
 </div>
 
 <style>
-    /* Стили для карточек категорий */
     .category-card {
         cursor: pointer;
         display: block;
@@ -94,36 +79,109 @@
         border: 2px solid #dee2e6;
         transition: all 0.2s;
         cursor: pointer;
+        border-radius: 8px;
     }
     .category-radio:checked + .category-card-inner {
         border-color: #0d6efd;
-        background-color: #f8f9fa;
+        background-color: #f0f8ff;
         box-shadow: 0 0 0 3px rgba(13, 110, 253, 0.25);
     }
     .category-card:hover .category-card-inner {
         border-color: #86b7fe;
-        transform: translateY(-2px);
+        transform: translateY(-3px);
     }
-    
-    /* Стили для radio-кнопок типа операции */
-    .btn-group input[type="radio"] {
-        display: none;
+    .category-card-inner i {
+        font-size: 1.8rem;
+        margin-bottom: 8px;
     }
-    .btn-group .btn.active {
-        background-color: #0d6efd;
-        color: white;
+    .category-card-inner h6 {
+        margin: 0;
+        font-size: 0.9rem;
+    }
+    .category-card-inner small {
+        font-size: 0.7rem;
     }
 </style>
 
 <script>
-    // Обработка выбора типа операции (меняем цвет активной кнопки)
-    document.querySelectorAll('.btn-group input[type="radio"]').forEach(radio => {
+    // Данные о категориях из backend
+    const categoriesData = {
+        expense: [
+            {% for cat in expense_categories %}
+            {
+                id: {{ cat.id }},
+                name: "{{ cat.name }}",
+                budget_limit: "{{ cat.budget_limit|default:'' }}"
+            }{% if not forloop.last %},{% endif %}
+            {% endfor %}
+        ],
+        income: [
+            {% for cat in income_categories %}
+            {
+                id: {{ cat.id }},
+                name: "{{ cat.name }}",
+                budget_limit: "{{ cat.budget_limit|default:'' }}"
+            }{% if not forloop.last %},{% endif %}
+            {% endfor %}
+        ]
+    };
+    
+    // Текущая выбранная категория (если редактируем)
+    let currentCategoryId = "{{ form.category.value|default:'' }}";
+    
+    // Функция отображения категорий по типу операции
+    function renderCategories(type) {
+        const container = document.getElementById('categories-container');
+        const categories = categoriesData[type] || [];
+        
+        if (categories.length === 0) {
+            container.innerHTML = `
+                <div class="col-12">
+                    <div class="alert alert-warning text-center py-3">
+                        <i class="fas fa-exclamation-triangle"></i> Нет категорий для выбранного типа.<br>
+                        <small>Создайте категорию в разделе "Категории"</small>
+                    </div>
+                </div>
+            `;
+            return;
+        }
+        
+        let html = '';
+        categories.forEach(cat => {
+            const isChecked = (currentCategoryId && currentCategoryId == cat.id) ? 'checked' : '';
+            html += `
+                <div class="col-md-4 col-sm-6">
+                    <label class="category-card">
+                        <input type="radio" name="category" value="${cat.id}" 
+                               class="category-radio" ${isChecked}>
+                        <div class="card category-card-inner">
+                            <div class="card-body text-center py-3">
+                                <i class="fas ${type === 'expense' ? 'fa-shopping-cart' : 'fa-money-bill-wave'} fa-2x mb-2"></i>
+                                <h6 class="mb-0">${cat.name}</h6>
+                                ${cat.budget_limit ? `<small class="text-muted">Лимит: ${cat.budget_limit} ₽</small>` : ''}
+                            </div>
+                        </div>
+                    </label>
+                </div>
+            `;
+        });
+        container.innerHTML = html;
+    }
+    
+    // Обработчик изменения типа операции
+    const typeRadios = document.querySelectorAll('input[name="type"]');
+    typeRadios.forEach(radio => {
         radio.addEventListener('change', function() {
-            document.querySelectorAll('.btn-group .btn').forEach(btn => {
-                btn.classList.remove('active');
-            });
-            this.parentElement.classList.add('active');
+            renderCategories(this.value);
         });
     });
+    
+    // Инициализация: показываем категории для выбранного типа
+    const selectedType = document.querySelector('input[name="type"]:checked');
+    if (selectedType) {
+        renderCategories(selectedType.value);
+    } else {
+        renderCategories('expense');
+    }
 </script>
 {% endblock %}

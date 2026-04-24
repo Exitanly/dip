@@ -57,12 +57,11 @@
                             <a class="nav-link" href="{% url 'dashboard' %}">Дашборд</a>
                         </li>
                         <li class="nav-item">
+                            <a class="nav-link" href="{% url 'category_list' %}">Категории</a>
+                        </li>
+                        <li class="nav-item">
                             <a class="nav-link" href="{% url 'transaction_list' %}">Операции</a>
                         </li>
-                        <li class="nav-item">
-                            <a class="nav-link" href="{% url 'add_transaction' %}">+ Добавить</a>
-                        </li>
-                        <li class="nav-item">
                             <span class="nav-link text-light">| {{ user.username }} |</span>
                         </li>
                         <li class="nav-item">

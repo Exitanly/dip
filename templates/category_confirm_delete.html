@@ -1,0 +1,25 @@
+{% extends 'base.html' %}
+
+{% block title %}Удалить категорию{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-6">
+        <div class="card border-danger">
+            <div class="card-header bg-danger text-white">
+                <h4>Удаление категории</h4>
+            </div>
+            <div class="card-body">
+                <p>Вы уверены, что хотите удалить категорию <strong>{{ category.name }}</strong>?</p>
+                <p class="text-danger">Внимание! Операции с этой категорией останутся, но категория станет недоступна для выбора.</p>
+                
+                <form method="post">
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-danger">Да, удалить</button>
+                    <a href="{% url 'category_list' %}" class="btn btn-secondary">Отмена</a>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
