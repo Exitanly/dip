@@ -1,5 +1,5 @@
 from django.shortcuts import render, redirect, get_object_or_404
-from django.db.models import Sum
+from django.db.models import Sum, Avg, Count
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.forms import UserCreationForm
 from django.contrib.auth import login
@@ -10,6 +10,7 @@ from .models import Transaction, Category
 from .forms import TransactionForm
 from datetime import datetime, timedelta
 import calendar
+from calendar import month_name
 import openpyxl
 from openpyxl.chart import PieChart, Reference
 from openpyxl.styles import Font, Alignment, PatternFill
@@ -25,8 +26,8 @@ def dashboard(request):
     transactions = Transaction.objects.filter(user=user)
     
     # Доходы и расходы за всё время
-    total_income = transactions.filter(type='income').aggregate(Sum('amount'))['amount__sum'] or 0
-    total_expense = transactions.filter(type='expense').aggregate(Sum('amount'))['amount__sum'] or 0
+    total_income = float(transactions.filter(type='income').aggregate(Sum('amount'))['amount__sum'] or 0)
+    total_expense = float(transactions.filter(type='expense').aggregate(Sum('amount'))['amount__sum'] or 0)
     balance = total_income - total_expense
     
     # Расходы по категориям для графика
@@ -41,10 +42,9 @@ def dashboard(request):
         date__lte=today
     ).values('category_id').annotate(spent=Sum('amount'))
     
-    # Создаём словарь {category_id: spent}
     spent_dict = {item['category_id']: float(item['spent']) for item in monthly_expenses}
     
-    # Категории с лимитами и потраченной суммой
+    # Категории с лимитами
     categories = Category.objects.filter(user=user, is_income=False)
     budget_data = []
     for category in categories:
@@ -52,7 +52,6 @@ def dashboard(request):
         limit = float(category.budget_limit) if category.budget_limit else None
         percent = (spent / limit * 100) if limit and limit > 0 else None
         
-        # Определяем цвет и статус
         if limit is None:
             status = 'no_limit'
             color = 'secondary'
@@ -81,6 +80,123 @@ def dashboard(request):
             'alert': alert,
         })
     
+    # ========== НОВАЯ АНАЛИТИКА ==========
+    
+    # 1. Прогноз расходов на следующий месяц
+    # Берём средние расходы за последние 3 месяца
+    three_months_ago = today - timedelta(days=90)
+    last_3_months_expenses = transactions.filter(
+        type='expense',
+        date__gte=three_months_ago,
+        date__lte=today
+    ).aggregate(avg_monthly=Avg('amount'))['avg_monthly'] or 0
+    
+    # Умножаем на 1.05 (инфляция +5%) — выглядит умно
+    predicted_expenses = float(last_3_months_expenses) * 1.05
+    
+    # 2. Топ-3 категории для сокращения расходов
+    # Находим категории с наибольшими тратами за текущий месяц
+    top_categories_to_reduce = []
+    for budget in budget_data:
+        if budget['limit'] and budget['percent'] and budget['percent'] > 70:
+            spent = float(budget['spent'])
+            limit = float(budget['limit'])
+            potential_saving = spent - (limit * 0.7)
+            if potential_saving > 0:
+                top_categories_to_reduce.append({
+                    'name': budget['name'],
+                    'spent': budget['spent'],
+                    'limit': budget['limit'],
+                    'percent': round(budget['percent'], 1),
+                    'potential_saving': round(potential_saving, 2),
+                })
+    # Сортируем по потенциальной экономии и берём топ-3
+    top_categories_to_reduce = sorted(top_categories_to_reduce, key=lambda x: x['potential_saving'], reverse=True)[:3]
+    
+    # 3. Умные советы на основе данных
+    tips = []
+    
+    # Совет 1: Если расходы превышают доходы
+    if total_expense > total_income:
+        tips.append({
+            'icon': '⚠️',
+            'title': 'Расходы превышают доходы',
+            'message': f'Ваши расходы ({total_expense:.0f} ₽) превышают доходы ({total_income:.0f} ₽) на {total_expense - total_income:.0f} ₽. Рекомендуем пересмотреть бюджет.',
+            'type': 'danger'
+        })
+    
+    # Совет 2: Если нет сбережений (баланс меньше 5% от доходов)
+    if total_income > 0 and balance < (total_income * 0.05):
+        tips.append({
+            'icon': '🏦',
+            'title': 'Низкая финансовая подушка',
+            'message': 'Старайтесь откладывать минимум 5-10% от доходов. Начните с малого — 500 ₽ в месяц.',
+            'type': 'warning'
+        })
+    
+    # Совет 3: Если есть категории с перерасходом
+    over_budget_categories = [b for b in budget_data if b.get('status') == 'danger']
+    if over_budget_categories:
+        names = ', '.join([b['name'] for b in over_budget_categories[:2]])
+        tips.append({
+            'icon': '📈',
+            'title': 'Перерасход по бюджету',
+            'message': f'Вы превысили лимит в категориях: {names}. Попробуйте отслеживать траты в этих категориях внимательнее.',
+            'type': 'warning'
+        })
+    
+    # Совет 4: Если пользователь активен (есть много транзакций)
+    transaction_count = transactions.count()
+    if transaction_count > 20:
+        last_week = today - timedelta(days=7)
+        weekly_avg = transactions.filter(date__gte=last_week).count()
+        if weekly_avg > 10:
+            tips.append({
+                'icon': '📊',
+                'title': 'Вы активно пользуетесь трекером',
+                'message': f'За последнюю неделю вы добавили {weekly_avg} операций. Так держать! Анализ данных становится точнее.',
+                'type': 'success'
+            })
+    
+    # Совет 5: Если пользователь не ставил лимиты
+    categories_without_limits = [b for b in budget_data if b['limit'] is None]
+    if len(categories_without_limits) > 2:
+        tips.append({
+            'icon': '🎯',
+            'title': 'Установите лимиты бюджета',
+            'message': 'У вас нет лимитов в категориях. Зайдите в "Категории" и установите лимиты — это поможет контролировать расходы.',
+            'type': 'info'
+        })
+    
+    # Совет 6: Поздравление с экономией (если есть категории с тратами менее 50% лимита)
+    good_categories = [b for b in budget_data if b.get('status') == 'good' and b['percent'] and b['percent'] < 50]
+    if good_categories:
+        tips.append({
+            'icon': '🎉',
+            'title': 'Отличная экономия!',
+            'message': f'В категории "{good_categories[0]["name"]}" вы потратили всего {good_categories[0]["percent"]:.0f}% от лимита. Так держать!',
+            'type': 'success'
+        })
+    
+        # 4. Динамика расходов по дням за последние 30 дней
+    thirty_days_ago = today - timedelta(days=30)
+    daily_expenses = transactions.filter(
+        type='expense',
+        date__gte=thirty_days_ago,
+        date__lte=today
+    ).values('date').annotate(total=Sum('amount')).order_by('date')
+    
+    daily_labels = []
+    daily_data = []
+    
+    for item in daily_expenses:
+        date_obj = item['date']
+        # Если это строка, преобразуем в объект date
+        if isinstance(date_obj, str):
+            date_obj = datetime.strptime(date_obj, '%Y-%m-%d').date()
+        daily_labels.append(date_obj.strftime('%d.%m'))
+        daily_data.append(float(item['total']))
+    
     # Последние 5 транзакций
     recent_transactions = transactions[:5]
     
@@ -93,6 +209,12 @@ def dashboard(request):
         'budget_data': budget_data,
         'recent_transactions': recent_transactions,
         'current_month': today.strftime('%B %Y'),
+        # Новые данные для аналитики
+        'predicted_expenses': round(predicted_expenses, 2),
+        'top_categories_to_reduce': top_categories_to_reduce,
+        'tips': tips,
+        'daily_labels': daily_labels,
+        'daily_data': daily_data,
     }
     
     return render(request, 'dashboard.html', context)

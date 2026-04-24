@@ -9,6 +9,15 @@
     </div>
 </div>
 
+<!-- Кнопка экспорта -->
+<div class="row mb-3">
+    <div class="col-12 text-end">
+        <a href="{% url 'export_excel' %}" class="btn btn-success">
+            📊 Скачать отчёт за месяц (Excel)
+        </a>
+    </div>
+</div>
+
 <!-- Карточки доходов/расходов/баланса -->
 <div class="row">
     <div class="col-md-4 mb-3">
@@ -37,16 +46,33 @@
     </div>
 </div>
 
-<div class="row mb-3">
-    <div class="col-12 text-end">
-        <a href="{% url 'export_excel' %}" class="btn btn-success">
-            📊 Скачать отчёт за месяц (Excel)
-        </a>
+<!-- ========== НОВЫЙ БЛОК: УМНЫЕ СОВЕТЫ ========== -->
+{% if tips %}
+<div class="row mt-3 mb-4">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header bg-info text-white">
+                <h5 class="mb-0">💡 Персональные рекомендации</h5>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    {% for tip in tips %}
+                    <div class="col-md-6 mb-2">
+                        <div class="alert alert-{{ tip.type }} mb-0">
+                            <strong>{{ tip.icon }} {{ tip.title }}</strong><br>
+                            {{ tip.message }}
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
     </div>
 </div>
+{% endif %}
 
 <!-- Две колонки: Бюджет + График -->
-<div class="row mt-4">
+<div class="row mt-2">
     <!-- Левая колонка: Прогресс-бары бюджета -->
     <div class="col-md-6">
         <div class="card h-100">
@@ -102,6 +128,71 @@
     </div>
 </div>
 
+<!-- ========== НОВЫЙ БЛОК: ПРОГНОЗЫ И АНАЛИТИКА ========== -->
+<div class="row mt-4">
+    <!-- Прогноз на следующий месяц -->
+    <div class="col-md-4">
+        <div class="card h-100">
+            <div class="card-header bg-secondary text-white">
+                <h5 class="mb-0">🔮 Прогноз на следующий месяц</h5>
+            </div>
+            <div class="card-body text-center">
+                {% if predicted_expenses > 0 %}
+                    <h3 class="text-primary">{{ predicted_expenses|floatformat:0 }} ₽</h3>
+                    <p class="text-muted">Ожидаемые расходы<br><small>(на основе средних за 3 месяца + инфляция 5%)</small></p>
+                    <div class="alert alert-info mt-2">
+                        <small>💡 Совет: запланируйте бюджет с учётом этой суммы</small>
+                    </div>
+                {% else %}
+                    <p class="text-muted">Недостаточно данных для прогноза.<br>Добавьте больше операций.</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    
+    <!-- Топ-3 категории для сокращения -->
+    <div class="col-md-4">
+        <div class="card h-100">
+            <div class="card-header bg-danger text-white">
+                <h5 class="mb-0">✂️ На чём можно сэкономить</h5>
+            </div>
+            <div class="card-body">
+                {% if top_categories_to_reduce %}
+                    {% for cat in top_categories_to_reduce %}
+                        <div class="mb-3">
+                            <div class="d-flex justify-content-between">
+                                <strong>{{ cat.name }}</strong>
+                                <span class="text-danger">{{ cat.percent }}% от лимита</span>
+                            </div>
+                            <div class="progress mb-1" style="height: 8px;">
+                                <div class="progress-bar bg-danger" style="width: {{ cat.percent }}%;"></div>
+                            </div>
+                            <small class="text-success">💰 Потенциальная экономия: {{ cat.potential_saving }} ₽</small>
+                        </div>
+                    {% endfor %}
+                    <p class="text-muted mt-2 small">
+                        <i class="fas fa-lightbulb"></i> Сократив расходы до 70% от лимита, вы сэкономите указанные суммы.
+                    </p>
+                {% else %}
+                    <p class="text-muted text-center">👍 Отлично! Вы укладываетесь в бюджет по всем категориям.</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    
+    <!-- Динамика расходов по дням (линейный график) -->
+    <div class="col-md-4">
+        <div class="card h-100">
+            <div class="card-header bg-dark text-white">
+                <h5 class="mb-0">📈 Динамика расходов (30 дней)</h5>
+            </div>
+            <div class="card-body">
+                <canvas id="trendChart" height="200"></canvas>
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- Последние операции -->
 <div class="row mt-4">
     <div class="col-12">
@@ -142,16 +233,44 @@
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script>
+    // Круговая диаграмма
     const ctx = document.getElementById('expenseChart').getContext('2d');
-    const expenseChart = new Chart(ctx, {
+    new Chart(ctx, {
         type: 'pie',
         data: {
             labels: {{ category_labels|safe }},
             datasets: [{
                 data: {{ category_data|safe }},
-                backgroundColor: ['#FF6384', '#36A2EB', '#FFCE56', '#4BC0C0', '#9966FF', '#FF9F40', '#FF6384', '#36A2EB'],
+                backgroundColor: ['#FF6384', '#36A2EB', '#FFCE56', '#4BC0C0', '#9966FF', '#FF9F40']
             }]
         }
     });
+    
+    // Линейный график динамики расходов
+    {% if daily_labels %}
+    const trendCtx = document.getElementById('trendChart').getContext('2d');
+    new Chart(trendCtx, {
+        type: 'line',
+        data: {
+            labels: {{ daily_labels|safe }},
+            datasets: [{
+                label: 'Расходы (₽)',
+                data: {{ daily_data|safe }},
+                borderColor: '#FF6384',
+                backgroundColor: 'rgba(255, 99, 132, 0.1)',
+                tension: 0.3,
+                fill: true
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: true,
+            plugins: {
+                legend: { position: 'top' },
+                tooltip: { callbacks: { label: (ctx) => `${ctx.raw} ₽` } }
+            }
+        }
+    });
+    {% endif %}
 </script>
 {% endblock %}
