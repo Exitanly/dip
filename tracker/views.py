@@ -5,11 +5,15 @@ from django.contrib.auth.forms import UserCreationForm
 from django.contrib.auth import login
 from django.contrib import messages
 from django.utils import timezone
-from django.http import  JsonResponse
+from django.http import  JsonResponse, HttpResponse
 from .models import Transaction, Category
 from .forms import TransactionForm
-from datetime import datetime
+from datetime import datetime, timedelta
 import calendar
+import openpyxl
+from openpyxl.chart import PieChart, Reference
+from openpyxl.styles import Font, Alignment, PatternFill
+
 
 @login_required
 def dashboard(request):
@@ -295,3 +299,127 @@ def category_spent_api(request, category_id):
         'spent': float(spent),
         'limit': float(category.budget_limit) if category.budget_limit else None,
     })
+
+@login_required
+def export_to_excel(request):
+    """Экспорт данных за текущий месяц в Excel с диаграммой"""
+    user = request.user
+    today = datetime.now().date()
+    first_day = today.replace(day=1)
+    last_day = (first_day + timedelta(days=32)).replace(day=1) - timedelta(days=1)
+    
+    # Получаем операции за месяц
+    transactions = Transaction.objects.filter(
+        user=user,
+        date__gte=first_day,
+        date__lte=last_day
+    ).select_related('category')
+    
+    # Получаем категории с расходами за месяц
+    expense_categories = Category.objects.filter(user=user, is_income=False)
+    
+    # Считаем потраченное по категориям
+    category_spending = {}
+    for cat in expense_categories:
+        spent = transactions.filter(category=cat, type='expense').aggregate(Sum('amount'))['amount__sum'] or 0
+        category_spending[cat.id] = {
+            'name': cat.name,
+            'spent': float(spent),
+            'limit': float(cat.budget_limit) if cat.budget_limit else None,
+        }
+    
+    # Создаём Excel-файл
+    wb = openpyxl.Workbook()
+    
+    # --- Лист 1: Все операции ---
+    ws_operations = wb.active
+    ws_operations.title = "Операции"
+    
+    # Заголовки
+    headers = ['Дата', 'Тип', 'Категория', 'Сумма', 'Описание']
+    for col, header in enumerate(headers, 1):
+        cell = ws_operations.cell(row=1, column=col, value=header)
+        cell.font = Font(bold=True)
+        cell.fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
+        cell.font = Font(color="FFFFFF", bold=True)
+    
+    # Данные
+    for row, t in enumerate(transactions, 2):
+        ws_operations.cell(row=row, column=1, value=t.date.strftime('%d.%m.%Y'))
+        ws_operations.cell(row=row, column=2, value='Расход' if t.type == 'expense' else 'Доход')
+        ws_operations.cell(row=row, column=3, value=t.category.name if t.category else '-')
+        ws_operations.cell(row=row, column=4, value=float(t.amount))
+        ws_operations.cell(row=row, column=5, value=t.description or '')
+    
+    # --- Лист 2: Сводка по категориям ---
+    ws_summary = wb.create_sheet("Сводка по бюджету")
+    
+    summary_headers = ['Категория', 'Потрачено (₽)', 'Лимит (₽)', 'Остаток (₽)', 'Выполнение (%)']
+    for col, header in enumerate(summary_headers, 1):
+        cell = ws_summary.cell(row=1, column=col, value=header)
+        cell.font = Font(bold=True)
+        cell.fill = PatternFill(start_color="70AD47", end_color="70AD47", fill_type="solid")
+        cell.font = Font(color="FFFFFF", bold=True)
+    
+    row = 2
+    for cat_data in category_spending.values():
+        spent = cat_data['spent']
+        limit = cat_data['limit']
+        
+        ws_summary.cell(row=row, column=1, value=cat_data['name'])
+        ws_summary.cell(row=row, column=2, value=spent)
+        
+        if limit:
+            remaining = limit - spent
+            percent = (spent / limit * 100) if limit > 0 else 0
+            ws_summary.cell(row=row, column=3, value=limit)
+            ws_summary.cell(row=row, column=4, value=round(remaining, 2))
+            ws_summary.cell(row=row, column=5, value=round(percent, 2))
+            
+            # Цвет ячейки в зависимости от процента
+            if percent > 100:
+                ws_summary.cell(row=row, column=5).fill = PatternFill(start_color="FF0000", end_color="FF0000", fill_type="solid")
+        else:
+            ws_summary.cell(row=row, column=3, value='Нет лимита')
+            ws_summary.cell(row=row, column=4, value='-')
+            ws_summary.cell(row=row, column=5, value='-')
+        
+        row += 1
+    
+    # --- Лист 3: Диаграмма расходов (Excel-график) ---
+    ws_chart = wb.create_sheet("График расходов")
+    
+    # Данные для диаграммы
+    chart_data = [[cat_data['name'], cat_data['spent']] for cat_data in category_spending.values() if cat_data['spent'] > 0]
+    
+    if chart_data:
+        ws_chart.cell(row=1, column=1, value="Категория")
+        ws_chart.cell(row=1, column=2, value="Сумма (₽)")
+        
+        for i, (name, spent) in enumerate(chart_data, 2):
+            ws_chart.cell(row=i, column=1, value=name)
+            ws_chart.cell(row=i, column=2, value=spent)
+        
+        # Создаём круговую диаграмму
+        pie = PieChart()
+        data = Reference(ws_chart, min_col=2, min_row=1, max_row=len(chart_data) + 1)
+        labels = Reference(ws_chart, min_col=1, min_row=2, max_row=len(chart_data) + 1)
+        pie.add_data(data, titles_from_data=True)
+        pie.set_categories(labels)
+        pie.title = "Структура расходов"
+        pie.height = 15
+        pie.width = 20
+        
+        ws_chart.add_chart(pie, "D1")
+    
+    # Настройка ширины колонок
+    for col in ['A', 'B', 'C', 'D', 'E']:
+        ws_operations.column_dimensions[col].width = 18
+        ws_summary.column_dimensions[col].width = 18
+    
+    # Формируем ответ
+    response = HttpResponse(content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    response['Content-Disposition'] = f'attachment; filename="finance_report_{first_day.strftime("%Y_%m")}.xlsx"'
+    wb.save(response)
+    
+    return response

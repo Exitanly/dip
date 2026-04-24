@@ -5,7 +5,14 @@
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-4">
     <h1>Все операции</h1>
-    <a href="{% url 'add_transaction' %}" class="btn btn-success">+ Добавить операцию</a>
+     <div>
+        <a href="{% url 'export_excel' %}" class="btn btn-success me-2">
+            📊 Excel-отчёт
+        </a>
+        <a href="{% url 'add_transaction' %}" class="btn btn-success">
+            + Добавить операцию
+        </a>
+    </div>
 </div>
 
 <!-- Фильтры -->
