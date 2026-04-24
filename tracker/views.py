@@ -4,26 +4,78 @@ from django.contrib.auth.decorators import login_required
 from django.contrib.auth.forms import UserCreationForm
 from django.contrib.auth import login
 from django.contrib import messages
+from django.utils import timezone
+from django.http import  JsonResponse
 from .models import Transaction, Category
 from .forms import TransactionForm
+from datetime import datetime
+import calendar
 
 @login_required
 def dashboard(request):
     user = request.user
+    today = timezone.now().date()
+    first_day_of_month = today.replace(day=1)
     
-    # Получаем все транзакции пользователя
+    # Все транзакции пользователя
     transactions = Transaction.objects.filter(user=user)
     
-    # Считаем доходы и расходы
+    # Доходы и расходы за всё время
     total_income = transactions.filter(type='income').aggregate(Sum('amount'))['amount__sum'] or 0
     total_expense = transactions.filter(type='expense').aggregate(Sum('amount'))['amount__sum'] or 0
     balance = total_income - total_expense
     
-    # Данные для графика: расходы по категориям
+    # Расходы по категориям для графика
     expense_by_category = transactions.filter(type='expense').values('category__name').annotate(total=Sum('amount'))
-    
     category_labels = [item['category__name'] for item in expense_by_category]
     category_data = [float(item['total']) for item in expense_by_category]
+    
+    # Расходы за текущий месяц по категориям (для прогресс-баров)
+    monthly_expenses = transactions.filter(
+        type='expense',
+        date__gte=first_day_of_month,
+        date__lte=today
+    ).values('category_id').annotate(spent=Sum('amount'))
+    
+    # Создаём словарь {category_id: spent}
+    spent_dict = {item['category_id']: float(item['spent']) for item in monthly_expenses}
+    
+    # Категории с лимитами и потраченной суммой
+    categories = Category.objects.filter(user=user, is_income=False)
+    budget_data = []
+    for category in categories:
+        spent = spent_dict.get(category.id, 0)
+        limit = float(category.budget_limit) if category.budget_limit else None
+        percent = (spent / limit * 100) if limit and limit > 0 else None
+        
+        # Определяем цвет и статус
+        if limit is None:
+            status = 'no_limit'
+            color = 'secondary'
+            alert = None
+        elif percent < 70:
+            status = 'good'
+            color = 'success'
+            alert = None
+        elif percent < 100:
+            status = 'warning'
+            color = 'warning'
+            alert = f'Осталось {limit - spent:.2f} ₽'
+        else:
+            status = 'danger'
+            color = 'danger'
+            alert = f'Перерасход на {spent - limit:.2f} ₽'
+        
+        budget_data.append({
+            'id': category.id,
+            'name': category.name,
+            'spent': spent,
+            'limit': limit,
+            'percent': percent,
+            'status': status,
+            'color': color,
+            'alert': alert,
+        })
     
     # Последние 5 транзакций
     recent_transactions = transactions[:5]
@@ -34,7 +86,9 @@ def dashboard(request):
         'balance': balance,
         'category_labels': category_labels,
         'category_data': category_data,
+        'budget_data': budget_data,
         'recent_transactions': recent_transactions,
+        'current_month': today.strftime('%B %Y'),
     }
     
     return render(request, 'dashboard.html', context)
@@ -61,9 +115,8 @@ def add_transaction(request):
         transaction.save()
         return redirect('dashboard')
     else:
-        # Разделяем категории на расходные и доходные
-        expense_categories = Category.objects.filter(user=request.user, is_income=False)
-        income_categories = Category.objects.filter(user=request.user, is_income=True)
+        expense_categories = Category.objects.filter(user=request.user, is_income=False).values('id', 'name', 'budget_limit')
+        income_categories = Category.objects.filter(user=request.user, is_income=True).values('id', 'name', 'budget_limit')
         
         context = {
             'title': 'Добавить операцию',
@@ -214,3 +267,31 @@ def category_delete(request, pk):
         return redirect('category_list')
     
     return render(request, 'category_confirm_delete.html', {'category': category})
+
+@login_required
+def category_spent_api(request, category_id):
+    """API для получения суммы расходов по категории за текущий месяц"""
+    user = request.user
+    today = timezone.now().date()
+    first_day_of_month = today.replace(day=1)
+    
+    # Проверяем, что категория принадлежит пользователю
+    try:
+        category = Category.objects.get(id=category_id, user=user)
+    except Category.DoesNotExist:
+        return JsonResponse({'error': 'Категория не найдена'}, status=404)
+    
+    # Сумма расходов за текущий месяц
+    spent = Transaction.objects.filter(
+        user=user,
+        category=category,
+        type='expense',
+        date__gte=first_day_of_month,
+        date__lte=today
+    ).aggregate(total=Sum('amount'))['total'] or 0
+    
+    return JsonResponse({
+        'category_id': category_id,
+        'spent': float(spent),
+        'limit': float(category.budget_limit) if category.budget_limit else None,
+    })

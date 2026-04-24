@@ -28,6 +28,10 @@
                     <!-- Категории (динамические карточки) -->
                     <div class="mb-4">
                         <label class="form-label fw-bold">Категория</label>
+                        <div id="budget-warning" class="alert alert-warning mb-3" style="display: none;">
+                            <i class="fas fa-exclamation-triangle"></i> 
+                            <span id="warning-text"></span>
+                        </div>
                         <div class="row g-2" id="categories-container">
                             <!-- Сюда будут динамически подгружаться категории -->
                             <div class="col-12 text-center text-muted py-3">
@@ -131,42 +135,92 @@
     
     // Функция отображения категорий по типу операции
     function renderCategories(type) {
-        const container = document.getElementById('categories-container');
-        const categories = categoriesData[type] || [];
-        
-        if (categories.length === 0) {
-            container.innerHTML = `
-                <div class="col-12">
-                    <div class="alert alert-warning text-center py-3">
-                        <i class="fas fa-exclamation-triangle"></i> Нет категорий для выбранного типа.<br>
-                        <small>Создайте категорию в разделе "Категории"</small>
-                    </div>
+    const container = document.getElementById('categories-container');
+    const categories = categoriesData[type] || [];
+    
+    if (categories.length === 0) {
+        container.innerHTML = `
+            <div class="col-12">
+                <div class="alert alert-warning text-center py-3">
+                    <i class="fas fa-exclamation-triangle"></i> Нет категорий для выбранного типа.<br>
+                    <small>Создайте категорию в разделе "Категории"</small>
                 </div>
-            `;
-            return;
-        }
-        
-        let html = '';
-        categories.forEach(cat => {
-            const isChecked = (currentCategoryId && currentCategoryId == cat.id) ? 'checked' : '';
-            html += `
-                <div class="col-md-4 col-sm-6">
-                    <label class="category-card">
-                        <input type="radio" name="category" value="${cat.id}" 
-                               class="category-radio" ${isChecked}>
-                        <div class="card category-card-inner">
-                            <div class="card-body text-center py-3">
-                                <i class="fas ${type === 'expense' ? 'fa-shopping-cart' : 'fa-money-bill-wave'} fa-2x mb-2"></i>
-                                <h6 class="mb-0">${cat.name}</h6>
-                                ${cat.budget_limit ? `<small class="text-muted">Лимит: ${cat.budget_limit} ₽</small>` : ''}
-                            </div>
-                        </div>
-                    </label>
-                </div>
-            `;
-        });
-        container.innerHTML = html;
+            </div>
+        `;
+        return;
     }
+    
+    let html = '';
+    categories.forEach(cat => {
+        const isChecked = (currentCategoryId && currentCategoryId == cat.id) ? 'checked' : '';
+        html += `
+            <div class="col-md-4 col-sm-6">
+                <label class="category-card">
+                    <input type="radio" name="category" value="${cat.id}" 
+                           class="category-radio" data-budget-limit="${cat.budget_limit || ''}" 
+                           data-category-name="${cat.name}" ${isChecked}>
+                    <div class="card category-card-inner">
+                        <div class="card-body text-center py-3">
+                            <i class="fas ${type === 'expense' ? 'fa-shopping-cart' : 'fa-money-bill-wave'} fa-2x mb-2"></i>
+                            <h6 class="mb-0">${cat.name}</h6>
+                            ${cat.budget_limit ? `<small class="text-muted">Лимит: ${cat.budget_limit} ₽</small>` : ''}
+                        </div>
+                    </div>
+                </label>
+            </div>
+        `;
+    });
+    container.innerHTML = html;
+    
+    // Добавляем обработчики для проверки лимита
+    document.querySelectorAll('input[name="category"]').forEach(radio => {
+        radio.addEventListener('change', checkBudgetLimit);
+    });
+    
+    // Если категория уже выбрана (при редактировании), проверяем её
+    const selected = document.querySelector('input[name="category"]:checked');
+    if (selected) {
+        checkBudgetLimit.call(selected);
+    }
+}
+
+// Функция проверки лимита бюджета
+async function checkBudgetLimit() {
+    const categoryId = this.value;
+    const categoryName = this.getAttribute('data-category-name');
+    const budgetLimit = parseFloat(this.getAttribute('data-budget-limit'));
+    
+    const warningDiv = document.getElementById('budget-warning');
+    const warningText = document.getElementById('warning-text');
+    
+    if (!budgetLimit || isNaN(budgetLimit)) {
+        warningDiv.style.display = 'none';
+        return;
+    }
+    
+    try {
+        const response = await fetch(`/api/category-spent/${categoryId}/`);
+        const data = await response.json();
+        const spent = data.spent;
+        const remaining = budgetLimit - spent;
+        const percentRemaining = (remaining / budgetLimit) * 100;
+        
+        if (percentRemaining <= 15 && percentRemaining > 0) {
+            warningDiv.style.display = 'block';
+            warningDiv.className = 'alert alert-warning mb-3';
+            warningText.innerHTML = `⚠️ В категории "${categoryName}" осталось ${remaining.toFixed(2)} ₽ (менее 15% бюджета). Будьте внимательны!`;
+        } else if (percentRemaining <= 0) {
+            warningDiv.style.display = 'block';
+            warningDiv.className = 'alert alert-danger mb-3';
+            warningText.innerHTML = `🚨 В категории "${categoryName}" ПЕРЕРАСХОД на ${Math.abs(remaining).toFixed(2)} ₽!`;
+        } else {
+            warningDiv.style.display = 'none';
+        }
+    } catch (error) {
+        console.error('Ошибка проверки бюджета:', error);
+        warningDiv.style.display = 'none';
+    }
+}
     
     // Обработчик изменения типа операции
     const typeRadios = document.querySelectorAll('input[name="type"]');
